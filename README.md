@@ -7,6 +7,9 @@ homebrew app: **native 4K at 60 frames a second** in most of the game played so 
 
 No game files are included. You need your own copy of the game.
 
+Latest release: [1.0](https://github.com/chonzytron/Gears-of-War-2-PS5/releases/tag/v1.0). What's in each
+release: [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
 Built on [COGBox](https://github.com/Shagg88/COGBox) by **[Shagg88](https://github.com/Shagg88)**: its
 Gears of War 2 static recompilation (Gears2-Native), game fixes and ReXGlue patches made this port possible.
 COGBox itself (the Windows ports of Gears 2, 3 and Judgment, and its launcher) is at [Shagg88/COGBox](https://github.com/Shagg88/COGBox).

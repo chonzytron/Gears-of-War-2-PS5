@@ -1,0 +1,96 @@
+# Gears of War 2 for PS5 - the settings for a test run on the console.
+# The test package has this as gow2.toml; copy it next to eboot.bin. After the run, bring back the whole
+# logs/ folder (gow2_<n>.log, capture_*.bmp, mark_*.bmp). Every setting is explained in gow2.example.toml.
+
+ps5_show_fps = true           # frame counter, top right
+ps5_skip_intro_videos = true  # straight to the title screen
+
+# Detailed logs: the 10 s "ps5 diag"/"ps5 cp" lines and a line for each slow frame.
+ps5_perf_log = true
+
+# No automatic pictures this run (they cost a hitch each); L3+R3 still saves one, if something looks wrong.
+ps5_capture = 0
+
+# When something looks wrong (white surfaces, missing textures, flicker): press L3+R3 (both sticks in) at once.
+# That picture is saved in logs/ (mark_<n>_f<frame>.bmp) and the log marks the moment and lists the frame's draws.
+# Then tell us roughly where you were and what you saw.
+ps5_mark_button = true
+
+# Where the GPU's and the command processor's time goes, every 30 s in the log (costs a few percent): off in
+# 0.1.23, to measure the frame rate a player gets (compare with run 30, which had it on).
+ps5_profile = false
+
+# New in 0.1.23: the command processor's per-draw timers can be turned off while the 10 s lines stay (they cost
+# ~6-8 % of the command processor on the console); off here to measure release speed. Their counters now each have
+# a cache line of their own (the command processor and the submission thread fought over shared ones).
+ps5_cp_timers = false
+
+# Direct3D's clears without the Xbox 360's 4x MSAA trick (each was a copy of the depth buffer each way): on the Linux
+# test build 41 EDRAM copies a frame became 8, 47 to 55 frames a second at 720p, the same picture.
+ps5_full_res_clears = true
+
+# Motion blur off while testing (on in the game by default).
+ps5_motion_blur = false
+
+# Resolve forwarding (Dead Space 2's), and Gears 2's shadow views written straight into their 800x800 depth texture
+# (it was loaded from memory 5 times a frame; now about 1.7; the same pixels, checked). Only acts above 720p.
+ps5_resolve_forward = 2
+ps5_draw_extent_from_viewport = true
+ps5_forward_into_larger = true
+
+# An EDRAM transfer into a colour render target is left out where the draw that needs it overwrites every pixel
+# (full-screen passes, clears): 4K transfers 11.1 to 4.1 ms on the Linux test build, the whole frame unchanged.
+ps5_skip_dead_transfers = true
+
+# The command processor's time in the heavy frames (the dips to the 40s in 0.1.6), Dead Space 2's two settings:
+# the GPU's copy of guest memory is no longer thrown away and uploaded again each frame (uploads 4.3 MB to 46 KB a
+# frame and guest memory 1.7 to 0.3 ms on the Linux test build; on the console 13-23 MB a frame in the dips), and a
+# draw with the last draw's textures keeps their bindings. The same pictures (checked).
+clear_memory_page_state = false
+ps5_reuse_texture_bindings = true
+
+# 0.1.19, new (off by default until this run confirms them; the same pixels on the Linux test build, 0 of every
+# picture different in each check):
+# - the 10-bit picture of the cinematics' depth of field (the HDR scene's bits read as 10:10:10:2, at the HDR
+#   picture's address) is written straight into its texture, not loaded again from memory;
+# - a picture written straight into its texture whose memory nothing else reads is no longer written to memory
+#   (the HDR scene, that 10-bit picture, one bloom picture). Chapter 3's opening cinematic at 4K on Linux:
+#   7.10 to 8.29 frames a second (+17 %).
+# (and, part of ps5_forward_into_larger: textures the HDR and 10-bit pictures outdate in each other are taken
+# back; 0.1.9's rule never did it for Gears 2: ps5_forward_packed_rule_old = true is the old rule)
+ps5_forward_10bit = true
+ps5_forward_skip_memory = true
+
+# New in 0.1.20 (off by default): each light's shadow is resolved into the top rows of the shadow atlas, and the
+# pictures sharing its address outdated it in between, so it was loaded from memory ~3 times a frame (1 ms a frame
+# in Chapter 3's cinematic on the console). Now the shadow is written straight into it, the rows it leaves out kept
+# (on the 360 they hold another picture's bits; filled with near or far depth on Linux, the cinematic looked the same).
+ps5_forward_partial_depth = true
+
+# New in 0.1.21 (off by default): the 1280x720 picture at the shadow atlas's address (and a 640x360 one there) is
+# copied straight into its texture instead of being loaded back from memory (~0.4 ms a frame in the cinematic).
+ps5_forward_8888 = true
+
+# New in 0.1.22 (off by default): the game's shader constants bound with dynamic offsets - a draw that only changes
+# constants no longer writes a new descriptor set (the alley's 4,500-draw frames wrote one nearly every draw).
+# Linux: the command processor's bindings time a draw 1.05 -> 0.64 us, same pictures.
+ps5_dynamic_constants = true
+# (0.1.22 also: GPU submissions every 1000 draws by default, was 300 - confirmed by run 29: the alley's command
+# processor 22.4 -> 19.8 ms a frame, the swap's part 3.6-4.0 -> 0.7-0.8 ms)
+
+# Confirmed on the console (runs 19-23) and the defaults since 0.1.19: ps5_packet_timing = false,
+# ps5_texture_view_cache = true, ps5_fast_ticks = true, ps5_register_ranges = false (broke Tai's armour),
+# ps5_vertex_buffer_frame_sync = true (false broke it), ps5_watch_first_guest_page = false.
+
+# The memory check of 0.1.15 (a short hitch every N seconds when on): off.
+ps5_upload_check = 0
+
+# Native 4K (3 x 1280x720), the aim. 720p is resolution_scale = 1.
+resolution_scale = 3
+
+# 60 frames a second: the game's every-second-vblank wait no longer holds it to 30 (vblanks every millisecond, as
+# COGBox's PC renderer does), the engine's own limiter set to 60, the picture shown at the TV's refresh; the guest
+# clock straight from the host's (as Dead Space 2). On the Linux test build at 720p: 54.7 to 60.0.
+vsync = false
+gow2_max_fps = 60
+clock_no_scaling = true

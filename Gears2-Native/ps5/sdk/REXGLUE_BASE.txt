@@ -1,0 +1,8 @@
+upstream_repo = https://github.com/rexglue/rexglue-sdk.git
+upstream_tag = nightly-20261002-bd833a2a
+upstream_commit = bd833a2ab69d305f99ddf57418fc38ffec8af93d
+
+# The tag COGBox's PC runtime is built from (Gears2-Native/patches/README.md), with COGBox's
+# patch stack (patches/rexglue-sdk-full.diff + sdk-patch46..116) on top: fetch_sdk.sh applies
+# both, commits the result and tags it gow2-patch-base. rexglue_ps5.patch is made against that tag.
+# Dead Space 2's PS5 layer (rexglue_ps5.patch for v0.10.0, c94f5ebd) is the starting point.

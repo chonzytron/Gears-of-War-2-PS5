@@ -1,0 +1,8 @@
+# Never commit the game or anything made from it (see Gears2-Native/.gitignore too).
+*.iso
+*.xex
+*.xexp
+TU_*
+*.log
+*.bmp
+__pycache__/

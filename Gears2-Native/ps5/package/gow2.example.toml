@@ -1,0 +1,85 @@
+# Gears of War 2 for PS5 - settings.
+#
+# Copy this file to gow2.toml (next to it, in the app's folder) and remove the
+# "#" in front of a line to change that setting. Without a gow2.toml the app
+# uses the values shown here. A line the app doesn't understand is ignored.
+#
+# The values shown are the ones the console runs settled on (native 4K at 60
+# frames a second): the app needs no gow2.toml to play.
+
+# The game's language: "auto" follows the PS5's. The US disc has English,
+# French, German, Spanish, Italian, Chinese, Korean, Polish, Russian, Czech and
+# Hungarian; the Xbox 360 had no setting for the last two, so they are English.
+#ps5_language = "auto"     # auto, english, french, german, spanish, italian, polish, russian, korean, chinese
+
+# A frames-a-second counter in the top right corner of the picture (the
+# pictures the game presents).
+#ps5_show_fps = false
+
+# The game's motion blur (the blur when the camera moves fast). false turns it off.
+#ps5_motion_blur = false   # off: the 60 frames a second were measured without it
+
+# The TV mode the picture is sent in: 2160 (4K), 1440 or 1080. The picture
+# the game draws (resolution_scale, below) is scaled to it.
+#ps5_display_height = 2160
+
+# The resolution the game is drawn at, in times the Xbox 360's 1280x720:
+# 1 = 1280x720, 2 = 2560x1440, 3 = 3840x2160 (native 4K, the aim). Each step is
+# a lot more work for the graphics chip.
+#resolution_scale = 3
+
+# The game's own frame-rate limit (COGBox's setting): 0 = the game's own (30),
+# 60 = up to 60, -1 = none. For 30 frames a second as on the Xbox 360, set
+# gow2_max_fps = 0 and vsync = true.
+#gow2_max_fps = 60
+
+# false: the game is no longer held to every second refresh of the screen (it
+# was made for 30 frames a second); the picture is still shown at the TV's
+# refresh, without tearing.
+#vsync = false
+
+# Render without the Xbox 360's predicated tiling (COGBox's default: needed for
+# the game's shading to look right outside an Xbox 360).
+#gow2_untiled = true
+
+# Skip the Epic Games and Microsoft Game Studios logo videos at start-up (the
+# game's own -nostartupmovies). The game's story films still play.
+#ps5_skip_intro_videos = true
+
+# The progress screen of the first start, while the game's files are prepared
+# (Title Update 6 and any DLC are unpacked). false: no screen, only a PS5
+# notification. Later starts don't show it, as long as the install folder holds
+# the same files as at the first start.
+#ps5_prepare_screen = true
+
+# At the end of that first start, the packages in the install folder the game
+# no longer needs (Title Update 6, DLC) are listed on the screen: Cross deletes
+# them, Circle keeps them. The disc image always stays (the game reads from it).
+# "keep": never ask; "delete": delete them without asking.
+#ps5_install_cleanup = "ask"
+
+# The log (in the app's logs folder): info, debug or trace say more.
+#log_level = "info"
+
+# For tests and performance work (see ps5/BUILD.md):
+#ps5_perf_log = false         # the 10 s "ps5 diag" lines and the slow-frame lines
+#ps5_profile = false          # where every thread spends its time, every 30 s
+#ps5_capture = 0              # a picture of the game every N seconds in logs/ (the last 100 are kept)
+#ps5_mark_button = false      # L3+R3 (both sticks in) when something looks wrong: that picture in logs/
+                              # (mark_<n>_f<frame>.bmp), a "ps5 mark" line and the next frame's draws in the log
+#ps5_input_script = ""        # buttons pressed by themselves at set times
+
+# The renderer's speed-ups (each checked picture for picture against the plain
+# path; false brings back the SDK's own path, for comparing pictures):
+#ps5_full_res_clears = true         # Direct3D's clears without the 360's 4x MSAA trick
+#ps5_resolve_forward = 2            # resolved pictures copied straight into the textures that read them
+#ps5_forward_into_larger = true     #   ...also into larger textures (the shadow atlas, bloom, HDR)
+#ps5_forward_10bit = true           #   ...and the depth of field's 10-bit picture
+#ps5_forward_partial_depth = true   #   ...and each light's shadow into the atlas's top rows
+#ps5_forward_8888 = true            #   ...and the 8-bit pictures at the shadow atlas's address
+#ps5_forward_skip_memory = true     # such pictures no longer written to memory when nothing reads it
+#ps5_draw_extent_from_viewport = true
+#ps5_skip_dead_transfers = true     # EDRAM copies left out where the next draw covers them
+#clear_memory_page_state = false    # the GPU's copy of game memory kept between frames
+#ps5_reuse_texture_bindings = true
+#ps5_dynamic_constants = true       # shader constants bound by offset, not a new set per draw
