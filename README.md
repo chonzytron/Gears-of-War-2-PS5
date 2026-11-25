@@ -1,5 +1,3 @@
-![Gears of War 2](Gears2-Native/ps5/background.jpg)
-
 # Gears of War 2 for PS5
 
 The Xbox 360 version of Gears of War 2 (Title Update 6), running natively on a jailbroken PS5 as a
