@@ -1,0 +1,427 @@
+diff -ruN src/layer0_xenos/frame_log.cpp src/layer0_xenos/frame_log.cpp
+--- src/layer0_xenos/frame_log.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer0_xenos/frame_log.cpp	2026-11-22 16:20:51.785237343 +0800
+@@ -25,6 +25,7 @@
+ #include <rex/cvar.h>
+ #include <rex/logging/macros.h>
+ 
++#ifdef _WIN32
+ #ifndef NOMINMAX
+ #define NOMINMAX
+ #endif
+@@ -32,6 +33,9 @@
+ #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
++#else
++#include <rex/chrono/clock.h>  // [ps5 port] host ticks where Windows has QueryPerformanceCounter
++#endif
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -72,6 +76,7 @@
+ 
+ namespace {
+ 
++#ifdef _WIN32
+ uint64_t Qpc() {
+   LARGE_INTEGER t;
+   QueryPerformanceCounter(&t);
+@@ -85,6 +90,13 @@
+   }();
+   return f;
+ }
++#else
++uint64_t Qpc() { return rex::chrono::Clock::QueryHostTickCount(); }  // [ps5 port]
++uint64_t QpcFreq() {
++  static const uint64_t f = rex::chrono::Clock::QueryHostTickFrequency();
++  return f;
++}
++#endif
+ double TicksToMs(uint64_t ticks) { return double(ticks) * 1000.0 / double(QpcFreq()); }
+ 
+ // Waits, charged as they happen (any thread); the GPU thread takes the difference at each game swap.
+diff -ruN src/layer0_xenos/observer_hub.cpp src/layer0_xenos/observer_hub.cpp
+--- src/layer0_xenos/observer_hub.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer0_xenos/observer_hub.cpp	2026-11-22 16:21:16.696358751 +0800
+@@ -11,6 +11,7 @@
+ #include <rex/graphics/draw_observer.h>
+ #include <rex/logging/macros.h>
+ 
++#ifdef _WIN32
+ #include <intrin.h>
+ #ifndef NOMINMAX
+ #define NOMINMAX
+@@ -19,8 +20,12 @@
+ #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
++#else
++#include <x86intrin.h>  // [ps5 port] __rdtsc
++#endif
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <atomic>
+ #include <mutex>
+ #include <vector>
+@@ -104,12 +109,21 @@
+     every_ = every;
+     timing_ = every > 0;
+     // Calibrate rdtsc against QueryPerformanceCounter over ~50 ms (invariant TSC on current CPUs).
++#ifdef _WIN32
+     LARGE_INTEGER f, a, b;
+     QueryPerformanceFrequency(&f);
+     QueryPerformanceCounter(&a);
+     const uint64_t r0 = __rdtsc();
+     do { QueryPerformanceCounter(&b); } while ((b.QuadPart - a.QuadPart) * 20 < f.QuadPart);
+     tsc_per_ms_ = double(__rdtsc() - r0) / (double(b.QuadPart - a.QuadPart) * 1000.0 / double(f.QuadPart));
++#else
++    // [ps5 port] the same calibration against steady_clock (once, when timing is turned on)
++    const auto a = std::chrono::steady_clock::now();
++    const uint64_t r0 = __rdtsc();
++    auto b = a;
++    do { b = std::chrono::steady_clock::now(); } while (b - a < std::chrono::milliseconds(50));
++    tsc_per_ms_ = double(__rdtsc() - r0) / std::chrono::duration<double, std::milli>(b - a).count();
++#endif
+   }
+ 
+  private:
+diff -ruN src/layer0_xenos/pm4_shadow.cpp src/layer0_xenos/pm4_shadow.cpp
+--- src/layer0_xenos/pm4_shadow.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer0_xenos/pm4_shadow.cpp	2026-11-22 16:20:51.785869894 +0800
+@@ -906,6 +906,7 @@
+ 
+ XenosConstGenerations XenosConstGens() { return g_const_gens; }
+ 
++#ifdef _WIN32
+ void XenosNotifyGuestWrite() {
+   g_guest_write_seq.fetch_add(1, std::memory_order_acq_rel);
+   WakeByAddressAll(&g_guest_write_seq);
+@@ -915,6 +916,31 @@
+   if (g_guest_write_seq.load(std::memory_order_acquire) != seen) return;
+   WaitOnAddress(&g_guest_write_seq, &seen, sizeof(seen), timeout_ms);  // returns early on any write; spurious wakes ok
+ }
++#else
++// [ps5 port] WaitOnAddress / WakeByAddressAll: a condition variable with a timeout; the writer only takes the lock
++// when someone waits.
++namespace {
++std::mutex g_guest_write_mutex;
++std::condition_variable g_guest_write_cv;
++std::atomic<uint32_t> g_guest_write_waiters{0};
++}  // namespace
++void XenosNotifyGuestWrite() {
++  g_guest_write_seq.fetch_add(1, std::memory_order_acq_rel);
++  if (g_guest_write_waiters.load(std::memory_order_acquire)) {
++    std::lock_guard<std::mutex> lock(g_guest_write_mutex);
++    g_guest_write_cv.notify_all();
++  }
++}
++
++void XenosWaitGuestWrite(uint32_t seen, uint32_t timeout_ms) {
++  if (g_guest_write_seq.load(std::memory_order_acquire) != seen) return;
++  std::unique_lock<std::mutex> lock(g_guest_write_mutex);
++  g_guest_write_waiters.fetch_add(1, std::memory_order_acq_rel);
++  g_guest_write_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
++                            [seen] { return g_guest_write_seq.load(std::memory_order_acquire) != seen; });
++  g_guest_write_waiters.fetch_sub(1, std::memory_order_acq_rel);
++}
++#endif
+ 
+ bool XenosPm4DeferWrite(uint32_t physical, const void* bytes, uint32_t size) {
+   if (!g_pipe || size > 16) return false;
+diff -ruN src/layer2_ue3/config_install.cpp src/layer2_ue3/config_install.cpp
+--- src/layer2_ue3/config_install.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer2_ue3/config_install.cpp	2026-11-22 20:01:48.472786514 +0800
+@@ -69,6 +69,15 @@
+ constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
+ constexpr const char* kOverlayDevice = "\\Device\\Ue3IniOverlay";
+ 
++// [ps5 port] A game-relative path written with '\\' (as the game names its files) as a host path: on Windows as it is;
++// elsewhere '\\' is part of a file name, so the separators become '/'.
++std::filesystem::path HostRel(std::string rel) {
++#if !defined(_WIN32)
++  for (char& c : rel) if (c == '\\') c = '/';
++#endif
++  return rex::to_path(rel);
++}
++
+ std::string Lower(std::string s) {
+   for (char& c : s) c = char(std::tolower(uint8_t(c)));
+   return s;
+@@ -929,7 +938,7 @@
+   // the start-up hash table: a replaced file named there gets its new hash
+   int hashed = 0;
+   for (const auto& [key, host] : files) {
+-    const fs::path orig = game / rex::to_path(key);
++    const fs::path orig = game / HostRel(key);
+     if (!fs::is_regular_file(orig, ec) || rex::path_to_utf8(host).rfind(rex::path_to_utf8(runtime->user_data_root() / "ini-edits"), 0) == 0) continue;
+     if (fs::file_size(orig, ec) > (64u << 20) || fs::file_size(host, ec) > (64u << 20)) continue;
+     auto read = [](const fs::path& p) {
+@@ -1074,7 +1083,7 @@
+   if (edits.empty() && !exit_menu && !binds) return;
+   if (!edits.empty() || binds) EditTitleUpdateInis(runtime, edits);   // 0.2.1
+   std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
+-  const fs::path src_dir = runtime->game_data_root() / fs::path(rel);
++  const fs::path src_dir = runtime->game_data_root() / HostRel(rel);
+   const fs::path out_dir = runtime->user_data_root() / "ini-edits";
+   std::error_code ec;
+   if (!fs::is_directory(src_dir, ec)) {
+diff -ruN src/layer2_ue3/objects.cpp src/layer2_ue3/objects.cpp
+--- src/layer2_ue3/objects.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer2_ue3/objects.cpp	2026-11-22 16:18:09.782867784 +0800
+@@ -19,6 +19,8 @@
+ 
+ #ifdef _WIN32
+ #include <windows.h>
++#else
++#include <rex/system/xmemory.h>  // [ps5 port] the guest page table answers what VirtualQuery / SEH do on Windows
+ #endif
+ 
+ namespace ue3::obj {
+@@ -30,7 +32,7 @@
+ std::unordered_map<std::string, uint32_t> g_classCache;
+ bool NameKey(const std::string& full, uint32_t* index, uint32_t* number);  // below
+ 
+-uint32_t Swap(uint32_t v) { return _byteswap_ulong(v); }
++uint32_t Swap(uint32_t v) { return __builtin_bswap32(v); }  // [ps5 port] (was _byteswap_ulong: the same, everywhere)
+ 
+ uint8_t* Host(uint32_t address) {
+   auto* rt = rex::Runtime::instance();
+@@ -39,6 +41,7 @@
+ 
+ // only plain committed memory: a guard page (guest stacks) would lose its guard, and the GPU register pages fault on
+ // purpose for the emulated device; neither may be touched from here
++#ifdef _WIN32
+ bool PageReadable(const uint8_t* host) {
+   MEMORY_BASIC_INFORMATION mbi;
+   if (!host || !VirtualQuery(host, &mbi, sizeof(mbi))) return false;
+@@ -53,11 +56,33 @@
+     return false;
+   }
+ }
++#else
++// [ps5 port] No SEH and no VirtualQuery: a guest page is readable when the guest page table says it is committed
++// readable (one lookup, no system call). Without a fault to catch, nothing is cached: a page freed since would crash.
++bool GuestAddressReadable(uint32_t address) {
++  auto* rt = rex::Runtime::instance();
++  auto* memory = rt ? rt->memory() : nullptr;
++  auto* heap = memory ? memory->LookupHeap(address) : nullptr;
++  uint32_t protect = 0;
++  return heap && heap->QueryProtect(address, &protect) && (protect & rex::memory::kMemoryProtectRead);
++}
++bool PageReadable(const uint8_t* host) {
++  auto* rt = rex::Runtime::instance();
++  return host && rt && GuestAddressReadable(uint32_t(host - rt->virtual_membase()));
++}
++bool CopyRaw(void* out, const void* src, size_t size) {
++  std::memcpy(out, src, size);  // (every page checked by the caller)
++  return true;
++}
++#endif
+ 
+ // guest pages (4 KB) seen readable, each asked about once (Gears3-Native's: a VirtualQuery per read stalled the title)
+ std::atomic<uint32_t> g_readablePages[0xC0000000ull / 4096 / 32];
+ 
+ bool GuestPageReadable(uint32_t address) {
++#ifndef _WIN32
++  return GuestAddressReadable(address);  // [ps5 port] asked every time (see PageReadable)
++#endif
+   std::atomic<uint32_t>& word = g_readablePages[address >> 17];
+   const uint32_t bit = 1u << ((address >> 12) & 31);
+   if (word.load(std::memory_order_relaxed) & bit) return true;
+@@ -79,6 +104,7 @@
+ 
+ template <class F>
+ bool GuardedScan(F& f, uint32_t a, const uint8_t* host, size_t n) {
++#ifdef _WIN32
+   bool r = true;
+   __try {
+     r = f(a, host, n);
+@@ -86,11 +112,25 @@
+     r = true;
+   }
+   return r;
++#else
++  return f(a, host, n);  // [ps5 port] the region is committed readable (ForEachRegion)
++#endif
+ }
+ 
+ // committed guest regions, for the one-time searches
+ template <class F>
+ void ForEachRegion(uint64_t from, uint64_t to, F&& f) {
++#ifndef _WIN32
++  // [ps5 port] Runs of readable guest pages from the page table, 4 KB at a time.
++  for (uint64_t a = from & ~4095ull; a < to;) {
++    while (a < to && (!GuestAddressReadable(uint32_t(a)) || (a >= 0x7FC00000 && a < 0x80000000))) a += 4096;
++    uint64_t end = a;
++    while (end < to && GuestAddressReadable(uint32_t(end)) && !(end >= 0x7FC00000 && end < 0x80000000)) end += 4096;
++    end = std::min(end, to);
++    if (end > a && !GuardedScan(f, uint32_t(a), Host(uint32_t(a)), size_t(end - a))) return;
++    a = end;
++  }
++#else
+   for (uint64_t a = from; a < to;) {
+     MEMORY_BASIC_INFORMATION mbi;
+     uint8_t* host = Host(uint32_t(a));
+@@ -101,6 +141,7 @@
+       if (!GuardedScan(f, uint32_t(a), host, size_t(end - a))) return;
+     a = end;
+   }
++#endif
+ }
+ 
+ // a name entry's text: 8-bit characters, or 16-bit big-endian ones (Gears of War 2006's TCHAR names), up to the 0
+@@ -457,12 +498,17 @@
+ // 0.6.0 review (as Gears3-Native's): the readable-page bitmap never forgets a page, so a page the game freed since it
+ // was read still passes Readable; the write itself is caught like CopyRaw's read, and that page is asked about again.
+ bool WriteRaw(void* dst, const void* src, size_t size) {
++#ifdef _WIN32
+   __try {
+     std::memcpy(dst, src, size);
+     return true;
+   } __except (EXCEPTION_EXECUTE_HANDLER) {
+     return false;
+   }
++#else
++  std::memcpy(dst, src, size);  // [ps5 port] (checked readable by the caller; a write-watched page faults into the SDK)
++  return true;
++#endif
+ }
+ 
+ void ForgetPage(uint32_t address) {
+diff -ruN src/layer3_gow2/game_patches.cpp src/layer3_gow2/game_patches.cpp
+--- src/layer3_gow2/game_patches.cpp	2026-11-21 09:11:04.000000000 +0800
++++ src/layer3_gow2/game_patches.cpp	2026-11-22 16:16:43.455571472 +0800
+@@ -48,6 +48,9 @@
+ #include <immintrin.h>
+ #ifdef _WIN32
+ #include <windows.h>
++#else
++#include <sched.h>
++#include <rex/chrono/clock.h>  // [ps5 port] host ticks (the TSC on the PS5) where Windows has QueryPerformanceCounter
+ #endif
+ 
+ #include <cctype>
+@@ -171,11 +174,18 @@
+   uint32_t count = 0;
+   uint32_t write_seq = 0;
+ };
++#ifndef _WIN32
++// [ps5 port] QueryPerformanceCounter's two uses here, on the SDK's host clock.
++static inline uint64_t Gow2HostTicks() { return rex::chrono::Clock::QueryHostTickCount(); }
++static inline uint64_t Gow2HostTickFrequency() { return rex::chrono::Clock::QueryHostTickFrequency(); }
++#else
++static inline uint64_t Gow2HostTicks() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return uint64_t(t.QuadPart); }
++static inline uint64_t Gow2HostTickFrequency() { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }
++#endif
+ static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
+-  static const uint64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }();
+-  LARGE_INTEGER now;
+-  QueryPerformanceCounter(&now);
+-  if (uint64_t(now.QuadPart) - w.last_qpc > freq / 5000) w.count = 0;
++  static const uint64_t freq = Gow2HostTickFrequency();
++  const uint64_t now = Gow2HostTicks();
++  if (now - w.last_qpc > freq / 5000) w.count = 0;
+   if (++w.count <= quick_steps) {
+     for (int i = 0; i < 32; ++i) _mm_pause();
+   } else {
+@@ -184,8 +194,7 @@
+     XenosWaitGuestWrite(w.write_seq, 1);
+   }
+   w.write_seq = XenosGuestWriteSeq();
+-  QueryPerformanceCounter(&now);
+-  w.last_qpc = uint64_t(now.QuadPart);
++  w.last_qpc = Gow2HostTicks();
+ }
+ 
+ // Job 178: the title's render thread polls the GPU (a D3D query's GetData, sub_829783A8, called in a loop by
+@@ -196,7 +205,11 @@
+   if (mode == 1) {
+     for (int i = 0; i < 32; ++i) _mm_pause();
+   } else if (mode == 2) {
++#ifdef _WIN32
+     SwitchToThread();
++#else
++    sched_yield();  // [ps5 port]
++#endif
+   } else if (mode == 3) {
+     thread_local Gow2WaitStreak streak;
+     Gow2SleepStep(streak);
+@@ -371,11 +384,15 @@
+   return 0.0;
+ }
+ inline double MonitorAspect() {
++#ifndef _WIN32
++  return 16.0 / 9.0;  // [ps5 port] a TV: no monitor to ask
++#else
+   MONITORINFO mi{sizeof(mi)};
+   HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+   if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
+   const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
+   return h > 0 ? w / h : 0.0;
++#endif
+ }
+ // 550 = Canary's shape; another height when --gow2_aspect asks for one
+ inline uint32_t Height(const std::string& v, const char* tag) {
+@@ -973,7 +990,11 @@
+   auto le32 = [](const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; };
+   uint8_t h[256] = {};
+   size_t got = 0;
++#ifdef _WIN32
+   if (FILE* fp = _wfopen(host_path->c_str(), L"rb")) {
++#else
++  if (FILE* fp = std::fopen(host_path->c_str(), "rb")) {  // [ps5 port]
++#endif
+     got = std::fread(h, 1, sizeof(h), fp);
+     std::fclose(fp);
+   }
+diff -ruN src/layer3_gow2/ue3_mouse_look.h src/layer3_gow2/ue3_mouse_look.h
+--- src/layer3_gow2/ue3_mouse_look.h	2026-11-21 09:11:04.000000000 +0800
++++ src/layer3_gow2/ue3_mouse_look.h	2026-11-22 16:18:56.973564272 +0800
+@@ -69,7 +69,9 @@
+ #include <cstdint>
+ #include <mutex>
+ 
++#ifdef _WIN32
+ #include <windows.h>
++#endif
+ 
+ REXCVAR_DEFINE_BOOL(ue3_mouse_look, false, "COGBox",
+                     "Native mouse look: the mouse turns the camera through the engine's own PC mouse axes (no stick "
+@@ -189,6 +191,9 @@
+ inline std::atomic<int> g_focus_heals{0};
+ inline void FocusHeal(rex::ui::Window* w) {
+   if (!w || w->HasFocus()) return;
++#ifndef _WIN32
++  return;  // [ps5 port] no other windows to be in front of
++#else
+   HWND fg = GetForegroundWindow();
+   DWORD pid = 0;
+   if (!fg || !GetWindowThreadProcessId(fg, &pid) || pid != GetCurrentProcessId()) return;
+@@ -202,6 +207,7 @@
+   SetFocus(nullptr);
+   SetFocus(fg);
+   w->Focus();
++#endif
+ }
+ 
+ class Listener : public rex::ui::WindowInputListener {
+@@ -231,12 +237,17 @@
+ inline Listener g_listener;
+ 
+ inline bool SafeCall(PPCFunc* fn, PPCContext* c, uint8_t* base) {
++#ifdef _WIN32
+   __try {
+     fn(*c, base);
+     return true;
+   } __except (EXCEPTION_EXECUTE_HANDLER) {
+     return false;
+   }
++#else
++  fn(*c, base);  // [ps5 port] no SEH; only reached with native mouse look on (no mouse on the PS5)
++  return true;
++#endif
+ }
+ 
+ // The motion of this frame, scaled and signed for the game (y up), in whole steps the engine keeps. False when none.
